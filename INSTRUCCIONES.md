@@ -10,5 +10,7 @@ A continuación se describen los principales scripts y archivos que componen est
 * **`Entrenando_RF/`:** Incluye los scripts de R con las especificaciones, hiperparámetros y flujo de trabajo (`tidymodels`/`ranger`) utilizados para el entrenamiento del modelo de *Random Forest*. El modelo ajustado resultante se guarda en el archivo **`rf_alquileres_Montevideo`**, ubicada en la carpeta de la app.
 
 * **`APP_ALQUILERES/APP_SHINY/`:** Código fuente de la aplicación interactiva construida en Shiny. Permite a los usuarios visualizar el mapa espacial de precios y desplegar el módulo predictivo para estimar el precio medio de alquiler según los insumos ingresados.
+**La app se encuentra publicada en el siguiente link: https://lgiudice2004.shinyapps.io/alquileres-montevideo/**
 
 * **Archivos Shapefile (`.shp`, `.dbf`, `.shx`, etc.):** Conjunto de datos geográficos que proveen las geometrías y capas espaciales necesarias para delimitar los barrios de Montevideo, calcular distancias y renderizar los mapas interactivos.
+
