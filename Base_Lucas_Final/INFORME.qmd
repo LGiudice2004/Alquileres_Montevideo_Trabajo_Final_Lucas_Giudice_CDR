@@ -1,6 +1,8 @@
 ---
 title: "Tarea III - Ciencia de datos con R"
-format: html
+format: 
+  html:
+    embed-resources: true
 editor: visual
 ---
 
@@ -13,6 +15,8 @@ editor: visual
 ```{r Set-Up, include = FALSE}
 
 knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+options(scipen = 999)
 
 ```
 
