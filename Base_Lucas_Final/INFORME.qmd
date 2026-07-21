@@ -1,0 +1,834 @@
+---
+title: "Tarea III - Ciencia de datos con R"
+format: 
+  html:
+    embed-resources: true
+editor: visual
+---
+
+------------------------------------------------------------------------
+
+**Hecho por:** Lucas Giúdice. **Docente:** Juan Pablo Ferreira.
+
+------------------------------------------------------------------------
+
+```{r Set-Up, include = FALSE}
+
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+options(scipen = 999)
+
+```
+
+```{r Librerías, include = FALSE}
+
+library(ggplot2)
+library(ggrepel)
+library(ggcorrplot)
+library(readxl)
+library(tidyverse)
+library(readr)
+library(readxl)
+library(tibble)
+library(knitr)
+library(kableExtra)
+library(corrplot)
+library(tidymodels)
+library(scales)
+library(patchwork)
+library(ggspatial)
+library(prettymapr)
+library(vip)
+library(hexbin)
+
+```
+
+```{r Cargamos datos, include = FALSE}
+
+base <- read_delim("APP_ALQUILERES/base.csv", delim = ";", 
+                   escape_double = FALSE, trim_ws = TRUE) |> 
+  mutate(precio_pesos = as.numeric(if_else(moneda == "USD(US$)", precio * 40, precio)))
+
+```
+
+## Análisis del mercado de alquiler de apartamentos en Montevideo
+
+El propósito de este informe es el de generar un análisis exploratorio de datos que derive en primeras conclusiones sobre las determinantes del precio de alquiler de apartamentos en los distintos barrios de Montevideo. El análisis es complementado junto a un monitor de visualización georreferenciada de las observaciones incluidas; construido mediante las herramientas contenidas en el paquete Shiny (R), permitiendo así la segmentación de las observaciones de acuerdo a los criterios que el usuario desee. A su vez, se incorpora un predictor de precio medio alojado en la misma aplicación interactiva, el cual busca brindar una estimación del valor aproximado de alquiler para un apartamento con características especificadas por el usuario.
+
+### Metodología
+
+El conjunto de datos proviene de los anuncios de alquiler disponibles en la plataforma Mercado Libre al 16 de julio de 2026, recolectados mediante técnicas automatizadas de web scraping. La muestra fue sometida a un proceso de depuración de datos con el fin de responder a los requerimientos tanto del análisis visual como del modelo predictivo.
+
+Para enriquecer la capacidad explicativa del modelo, se incorporaron variables métricas de distancia hacia puntos de interés urbano considerados relevantes en la segmentación territorial de Montevideo. Posteriormente, se llevó a cabo el análisis exploratorio integrando herramientas estadísticas y de visualización. Finalmente, se implementó un algoritmo de Random Forest para la estimación de precios, seleccionado por su alto poder predictivo y su robustez ante la presencia de valores atípicos.
+
+### Datos
+
+La base de datos original contenia un total de 2000 observaciones de apartamentos. Los criterios de depuración obedecieron criterios como información geográfica inconsistente con los datos reales, observaciones con valores no verosímiles con la realidad (apartamentos con ningún baño, gastos comúnes con valores muy bajos, números de dormitorio o baños incongruentes, entre otros motivos). Se imputaron valores faltantes en variables binarias referentes a cualidades del apartamento como lo es la posesión o no de aire acondicionado, o de calefacción. Las imputaciones son realizadas todas en favor de la negativa, considerando que son cualidades que el propietario notificaría de poseer. Unicamente el poseer servicio de ascensor fue imputado en dirección afirmativa. Para enriquecer el analisis se incluyen las distancias de la propiedad a ciertos puntos neurálgicos de la ciudad, útiles en su capacidad de segmentación de la misma. Las distancias se calculan a partir de datos de la Intendencia de Montevideo. También se adjudica el barrio en el cual reside la propiedad utilizando datos de la misma fuente. En primer lugar, se realizó un cruzamiento espacial (spatial join) cruzando las coordenadas de cada inmueble con la capa vectorial oficial de barrios de la Intendencia de Montevideo, corregida en su codificación y toponimia. Esto permitió reasignar con precisión geográfica el barrio real de cada apartamento y remover manualmente publicaciones con georreferenciación inconsistente respecto a su dirección. Los ajustes realizados a la base resultaron en el número final de 1386 observaciones de alquileres, con un total de 30 variables. Las mismas son definidas a continuación:
+
+```{r Variables}
+
+# Creamos el dataframe con la descripción de las variables
+variables_df <- data.frame(
+  Variable = c(
+    "precio", "moneda", "direccion", "barrio", "metros_totales",
+    "area_privada", "dormitorios", "baños", "garage", "gastos_comunes",
+    "admite_mascotas", "disposicion", "balcon", "terraza", "ascensor",
+    "amueblado", "aire_acondicionado", "calefaccion", "latitud_Y",
+    "longitud_X", "url", "dist_av_18_de_julio", "dist_av_8_de_octubre", "dist_av_agraciada",
+    "dist_av_bolivia", "dist_av_gral_eugenio_garzon", "dist_av_italia", "dist_bv_gral_artigas", "dist_bv_jose_batlle_y_ordoñez"
+  ),
+  Tipo = c(
+    "Numérica", "Carácter", "Carácter", "Carácter", "Numérica",
+    "Numérica", "Numérica", "Numérica", "Carácter (Binaria)", "Numérica",
+    "Carácter", "Carácter (Binaria)", "Carácter (Binaria)", "Carácter (Binaria)", "Carácter (Binaria)",
+    "Carácter (Binaria)", "Carácter (Binaria)", "Carácter (Binaria)", "Numérica",
+    "Numérica", "Carácter", "Numérica", "Numérica", "Numérica",
+    "Numérica", "Numérica", "Numérica", "Numérica", "Numérica"
+  ),
+  Descripción = c(
+    "Monto del alquiler",
+    "Moneda de la publicación (UYU o USD)",
+    "Dirección",
+    "Barrio",
+    "Superficie total construida en metros cuadrados",
+    "Superficie privada en metros cuadrados",
+    "Cantidad de dormitorios",
+    "Cantidad de baños",
+    "¿Tiene garaje? (Si / No)",
+    "Gastos comunes en UYU($)",
+    "¿Permite mascotas?",
+    "¿Es una propiedad ubicada al frente? (Si / No)",
+    "¿Tiene balcón? (Si / No)",
+    "¿Tiene  terraza? (Si / No)",
+    "¿Tiene ascensor? (Si / No)",
+    "¿La propiedad está amueblada? (Si / No)",
+    "¿Posee aire acondicionado? (Si / No)",
+    "¿Posee sistema de calefacción? (Si / No)",
+    "Coordenada de longitud (X) para georreferenciación",
+    "Coordenada de latitud (Y) para georreferenciación",
+    "Enlace web a la publicación original en Mercado Libre",
+    "Distancia en metros a Av. 18 de Julio",
+    "Distancia en metros a Av. 8 de Octubre",
+    "Distancia en metros a Av. Agraciada",
+    "Distancia en metros a Av. Bolivia",
+    "Distancia en metros a Av. Gral. Eugenio Garzón",
+    "Distancia en metros a Av. Italia",
+    "Distancia en metros a Bv. Gral. Artigas",
+    "Distancia en metros a Bv. José Batlle y Ordóñez"
+  )
+)
+
+# Generación de la tabla con kable
+variables_df |> 
+  kbl(
+    caption = "Descripción de las variables del conjunto de datos final",
+    col.names = c("Variable", "Tipo de Dato", "Descripción"),
+    align = c("l", "c", "l")
+  ) |> 
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+    full_width = FALSE,
+    position = "center"
+  ) |> 
+  pack_rows("Atributos Generales", 1, 10) |> 
+  pack_rows("Comodidades", 11, 18) |> 
+  pack_rows("Georreferenciación y Enlaces", 19, 21) |> 
+  pack_rows("Variables de distancia", 22, 29)
+
+```
+
+### Análisis exploratorio
+
+La distribución del precio tiene una asimetría hacia la derecha. La media de precio `r mean(base$precio)`\$ tiene valores mayores a la mediana de `r mean(base$precio)`\$ , lo que respalda la asímetría en los datos. Esto nos indica la presencia de valores atípicos que arrastran la media de los alquileres hacia valores más altos. Se observa como los valores de alquiler que superan a la media comienzan a cobrarse en mayor proporción en dolares.
+
+```{r Distribución del precio}
+
+ggplot(base, aes(x = precio_pesos, fill = moneda)) +
+  geom_histogram(
+    bins = 40,           
+    color = "white",     
+    alpha = 0.85
+  ) +
+  geom_vline(
+    xintercept = mean(base$precio_pesos, na.rm = TRUE),
+    color = "darkred",
+    linetype = "dashed",
+    linewidth = 1
+  ) +
+  scale_x_continuous(
+    labels = label_comma(big.mark = ".", decimal.mark = ","),
+    limits = c(0, 200000)
+  ) + 
+  scale_fill_manual(
+    values = c("#2B4C7E", "#7D8C99"), 
+    name = "Moneda:"                   
+  ) +
+  labs(
+    title = "Distribución de Precios ($)",
+    x = "Precio",
+    y = "Cantidad de propiedades",
+    caption = "La línea punteada indica la media de precio en pesos."
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    axis.title = element_text(face = "bold"),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(face = "bold", size = 10),
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    plot.caption = element_text(hjust = 0, size = 9, face = "italic"),
+    plot.caption.position = "plot"
+  )
+
+```
+
+Visualizamos el resultado anteriormente intuido: si bien la cantidad relativa de viviendas transaccionadas en dolares es menor (`r percent(nrow(base |>  filter(moneda == "USD(US$)")) / nrow(base), accuracy = 0.1)`), su precencia comienza a ser más relevante cuanto mayor es el precio del alquiler del inmueble.
+
+```{r Moneda}
+
+base_deciles <- base |> 
+  mutate(
+    decil = factor(
+      ntile(precio_pesos, 10),
+      levels = 1:10,
+      labels = paste0("D", 1:10) 
+    )
+  )
+
+ggplot(base_deciles, aes(x = decil, fill = moneda)) +
+  geom_bar(position = "fill", width = 0.7) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  scale_fill_manual(
+    values = c("#2B4C7E", "#7D8C99"), 
+    name = "Moneda:"
+  ) +
+  labs(
+    title = "Proporción de moneda de cobro",
+    subtitle = "Distribución relativa al 100% por deciles",
+    x = "Deciles",
+    y = "Porcentaje de propiedades",
+    caption = "Decil de Precio (D1 = más bajo, D10 = más alto)"
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5, size = 11),
+    axis.title = element_text(face = "bold"),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(face = "bold", size = 10),
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    plot.caption = element_text(hjust = 0, size = 9, face = "italic"),
+    plot.caption.position = "plot"
+  )
+
+```
+
+```{r Relación Precio-Variables del hogar}
+
+# Recodificamos las variables para los gráficos
+base_prep <- base |> 
+  mutate(
+    dormitorios_cat = case_when(
+      dormitorios == 0 ~ "0",
+      dormitorios == 1 ~ "1",
+      dormitorios == 2 ~ "2",
+      dormitorios == 3 ~ "3",
+      dormitorios >= 4 ~ "4+",
+      TRUE ~ NA_character_
+    ) |> factor(levels = c("0", "1", "2", "3", "4+")),
+    
+    baños_cat = case_when(
+      baños == 1 ~ "1",
+      baños == 2 ~ "2",
+      baños == 3 ~ "3",
+      baños >= 4 ~ "4+",
+      TRUE ~ NA_character_
+    ) |> factor(levels = c("1", "2", "3", "4+")),
+    
+    balcon_cat = ifelse(balcon %in% c(1, TRUE, "1", "TRUE", "Si", "Sí"), "Con balcón", "Sin balcón"),
+    garage_cat = ifelse(garage %in% c(1, TRUE, "1", "TRUE", "Si", "Sí"), "Con garage", "Sin garage")
+  )
+
+# Paletas de colores sobrias
+paleta_4cat <- c("#2B4C7E", "#4A6FA5", "#7D8C99", "#5C6B73")
+paleta_2cat <- c("#2B4C7E", "#7D8C99")
+
+```
+
+La relación entre el precio y el número de dormitorios es una claramente positiva. A mayor número de dormitorios el precio es mayor. Sin embargo se observa como la distribución de los precios de alquiler de apartamentos con menor número de dormitorios (monoambientes y apartamentos de hasta 2 habitaciones) es más concentrada que los datos correspondientes a apartamentos con 3 dormitorios en adelante, cuyos precios son más distribuidos, lo que puede indicar una mayor incidencia de otras variables en la formación de precios de dichos apartamentos.
+
+```{r Dormitorios-Precio}
+
+dorm <- ggplot(base_prep, aes(x = precio_pesos, fill = dormitorios_cat)) +
+  geom_density(alpha = 0.4, color = "white") +
+  labs(title = "Precio VS N° de dormitorios", x = "Precio ($)", y = "Densidad", fill = "N° de dormitorios") +
+  scale_x_continuous(
+    labels = label_comma(big.mark = ".", decimal.mark = ","),
+    limits = c(0, 200000)
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5, size = 11),
+    axis.title = element_text(face = "bold"),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(face = "bold", size = 10),
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    plot.caption = element_text(hjust = 0, size = 9, face = "italic"),
+    plot.caption.position = "plot"
+  )
+
+dorm
+
+```
+
+Por el contrario, el efecto de la cantidad de baños parece ser más determinante en la formación de los precios de los alquileres. Del gráfico se obtiene un claro contraste entre la distribución de apartamentos con un único baño, con una concentración definida sobre los menores precios de alquiler, respecto de los apartamentos con mayor número de baños. Estos comienzan su distribución con valores mayores de alquileres y una dispersión más alta. Asimismo el porcentaje de alquileres con un baño es mayoritario con un `r percent(nrow(base |>  filter(baños == 1)) / nrow(base))` del total.
+
+```{r Baños-Precio}
+
+baños <- ggplot(base_prep, aes(x = precio_pesos, fill = baños_cat)) +
+  geom_density(alpha = 0.4, color = "white") +
+  labs(title = "Precio VS N° de baños", x = "Precio ($)", y = "Densidad", fill = "N° de baños") +
+  scale_x_continuous(
+    labels = label_comma(big.mark = ".", decimal.mark = ","),
+    limits = c(0, 200000)
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5, size = 11),
+    axis.title = element_text(face = "bold"),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(face = "bold", size = 10),
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    plot.caption = element_text(hjust = 0, size = 9, face = "italic"),
+    plot.caption.position = "plot"
+  )
+
+baños
+
+```
+
+Observando la distribución de ambas variables en cantidades, se observa una cantidad relevante de apartamentos que poseen entre uno y dos dormitorios, constituyendo más de dos terceras partes del total. Sorprende la menor proporción de monoambientes que hay respecto de la presencia que suelen tener en el discurso público. Una mínima fracción de las viviendas son de más de dos dormitorios. La distribución de los baños, como ya se había adelantado es totalmente concentrada en torno a un único baño.
+
+```{r Dormitorios-Baños}
+
+cant_aux <- base |> 
+  mutate(
+    dormitorios_cat = case_when(
+      dormitorios == 0 ~ "0",
+      dormitorios == 1 ~ "1",
+      dormitorios == 2 ~ "2",
+      dormitorios == 3 ~ "3",
+      dormitorios >= 4 ~ "4+",
+      TRUE ~ NA_character_
+    ) |> factor(levels = c("0", "1", "2", "3", "4+")),
+    
+    baños_cat = case_when(
+      baños == 1 ~ "1",
+      baños == 2 ~ "2",
+      baños == 3 ~ "3",
+      baños >= 4 ~ "4+",
+      TRUE ~ NA_character_
+    ) |> factor(levels = c("1", "2", "3", "4+"))
+  )
+
+
+n_dorm <- cant_aux |> 
+  filter(!is.na(dormitorios_cat)) |> 
+  count(dormitorios_cat) |> 
+  mutate(pct = n / sum(n))
+
+cant_dorm <- ggplot(n_dorm, aes(x = dormitorios_cat, y = pct)) +
+  geom_col(fill = "#2B4C7E", width = 0.65) +
+  geom_text(aes(label = percent(pct, accuracy = 0.1)), hjust = -0.15, fontface = "bold", size = 3.5) +
+  coord_flip() +
+  scale_y_continuous(labels = percent_format(), limits = c(0, max(n_dorm$pct) * 1.2)) +
+  labs(title = "Dormitorios", x = NULL, y = "Proporción") +
+  theme_bw(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.title = element_text(face = "bold"),
+    axis.text.y = element_text(face = "bold")
+  )
+
+
+n_baños <- cant_aux |> 
+  filter(!is.na(baños_cat)) |> 
+  count(baños_cat) |> 
+  mutate(pct = n / sum(n))
+
+cant_baños <- ggplot(n_baños, aes(x = baños_cat, y = pct)) +
+  geom_col(fill = "#4A6FA5", width = 0.65) +
+  geom_text(aes(label = percent(pct, accuracy = 0.1)), hjust = -0.15, fontface = "bold", size = 3.5) +
+  coord_flip() +
+  scale_y_continuous(labels = percent_format(), limits = c(0, max(n_baños$pct) * 1.2)) +
+  labs(title = "Baños", x = NULL, y = "Proporción") +
+  theme_bw(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.title = element_text(face = "bold"),
+    axis.text.y = element_text(face = "bold")
+  )
+
+cant_dorm + cant_baños +
+  plot_annotation(
+    title = "Distribución Relativa de Dormitorios y Baños",
+    theme = theme(plot.title = element_text(face = "bold", size = 13, hjust = 0.5))
+  )
+
+```
+
+Se observa una relación positiva y esperable entre los metros cuadrados totales de la propiedad y el precio del alquiler. Esta dinámica se alinea con la mayor cantidad de dormitorios presente en los inmuebles de valor más alto, dado que un mayor número de ambientes requiere una superficie superior. Por otra parte, la relación entre el precio de alquiler y los gastos comunes muestra una intensidad similar con un de claro signo positivo, evidenciando que los apartamentos de mayor valor de mercado tienden a registrar también costos más elevados.
+
+```{r Precio-Metros Totales , Precio-Gastos comunes}
+
+metros <- ggplot(base, aes(x = metros_totales, y = precio_pesos)) +
+  geom_point(alpha = 0.4, color = "#2B4C7E", size = 2) +
+  geom_smooth(method = "lm", color = "#D9534F", se = TRUE, linetype = "dashed") +
+  scale_x_continuous(labels = label_comma(big.mark = ".", decimal.mark = ",")) +
+  scale_y_continuous(labels = label_comma(big.mark = ".", decimal.mark = ",")) +
+  coord_cartesian(xlim = c(0, 500), ylim = c(0, 500000)) + # Zoom para evitar outliers extremos
+  labs(
+    title = "Precio VS Metros Cuadrados Totales",
+    x = "Metros Cuadrados (m²)",
+    y = "Precio ($)"
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5, size = 11),
+    axis.title = element_text(face = "bold"),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(face = "bold", size = 10),
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    plot.caption = element_text(hjust = 0, size = 9, face = "italic"),
+    plot.caption.position = "plot"
+  )
+
+gc <- ggplot(base, aes(x = gastos_comunes, y = precio_pesos)) +
+  geom_point(alpha = 0.4, color = "#2B4C7E", size = 2) +
+  geom_smooth(method = "lm", color = "#D9534F", se = TRUE, linetype = "dashed") +
+  scale_x_continuous(labels = label_comma(big.mark = ".", decimal.mark = ",")) +
+  scale_y_continuous(labels = label_comma(big.mark = ".", decimal.mark = ",")) +
+  coord_cartesian(xlim = c(1000, 100000), ylim = c(0, 500000)) + 
+  labs(
+    title = "Precio VS Gastos comunes",
+    x = "Gastos comunes ($)",
+    y = "Precio ($)"
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5, size = 11),
+    axis.title = element_text(face = "bold"),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(face = "bold", size = 10),
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    plot.caption = element_text(hjust = 0, size = 9, face = "italic"),
+    plot.caption.position = "plot"
+  )
+
+metros
+
+gc
+
+```
+
+A continuación, se sintetizan los hallazgos relativos a las variables numéricas más relevantes, acompañados por la matriz de correlación entre estas y el precio de alquiler. En alineación con el análisis previo, se observa una correlación lineal marcadamente positiva entre las variables seleccionadas y el valor del arrendamiento.
+
+```{r Corr Numericas}
+
+cor_aux <- base |> 
+  select(
+    precio_pesos, dormitorios, baños, metros_totales, area_privada,
+    gastos_comunes
+  ) |> 
+  mutate(across(everything(), ~ as.numeric(as.character(.)))) |> 
+  summarise(across(-precio_pesos, ~ cor(precio_pesos, ., use = "complete.obs"))) |> 
+  tidyr::pivot_longer(
+    cols = everything(),
+    names_to = "variable",
+    values_to = "correlacion"
+  ) |> 
+  mutate(
+    variable = gsub("_", " ", variable),
+    variable = stringr::str_to_title(variable)
+  )
+
+ggplot(cor_aux, aes(x = reorder(variable, correlacion), y = correlacion, fill = correlacion)) +
+  geom_col(width = 0.7, show.legend = FALSE) +
+  geom_text(
+    aes(
+      label = round(correlacion, 2),
+      hjust = ifelse(correlacion >= 0, -0.2, 1.2)
+    ),
+    fontface = "bold",
+    size = 3.5
+  ) +
+  coord_flip() +
+  scale_y_continuous(limits = c(-1, 1), breaks = seq(-1, 1, 0.2)) +
+  scale_fill_gradient2(
+    low = "#2B4C7E", 
+    mid = "gray90", 
+    high = "#D9534F", 
+    midpoint = 0
+  ) +
+  labs(
+    title = "Correlación del Precio en Pesos contra cada Variable",
+    x = NULL,
+    y = "Correlación"
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    axis.title = element_text(face = "bold"),
+    axis.text.y = element_text(face = "bold"),
+    plot.caption = element_text(hjust = 0, face = "italic", size = 9),
+    plot.caption.position = "plot"
+  )
+
+```
+
+Analogamente, se replica el análisis para las variables de distancia a las principales vías de la ciudad. Los resultados son concluyentes en algunos sentidos. Para empezar destaca la clara correlación negativa entre el precio de alquiler y la cercanía respecto de la Avenida Bolivia, vía ubicada en el este de la ciudad donde también se hayan los barrios asociados a sectores socioeconomicos más pudientes. En línea con esto, esta relación negativa indica que mientras más cerca te halles, mayor será el precio de alquiler. En el lado contrario tenemos el caso de las distancias respecto de Avenida Agraciada o Avenida Garzón, más próximas al noroeste de la ciudad, y para las cuales el coeficiente de correlación indica que su cercanía es sinónimo de precios menores. La cercanía a Avenidas como Bulevar Artigas y 8 de Octubre que se aproximan más a zonas Nortes y Noroestes también son indicativos de menores precios. Llama la atención Avenida Italia, ruta que marcadamente se orienta hacia el este. Sin embargo, existe la imagen popular de Avenida Italia como \italiic{"frontera entre dos realidades"}, considerandosela una separadora entre condiciones económicas superlativas frente a otras de menor brillo. Esta correlación baja indica a su neutralidad en términos de precio, reflejo de dicha posición divisioria de la realidad socioeconómica del departamento.
+
+```{r Distancia}
+
+cor_aux <- base |> 
+  select(
+    precio_pesos, starts_with("dist_")
+  ) |> 
+  mutate(across(everything(), ~ as.numeric(as.character(.)))) |> 
+  summarise(across(-precio_pesos, ~ cor(precio_pesos, ., use = "complete.obs"))) |> 
+  tidyr::pivot_longer(
+    cols = everything(),
+    names_to = "variable",
+    values_to = "correlacion"
+  ) |> 
+  mutate(
+    variable = gsub("_", " ", variable),
+    variable = stringr::str_to_title(variable)
+  )
+
+ggplot(cor_aux, aes(x = reorder(variable, correlacion), y = correlacion, fill = correlacion)) +
+  geom_col(width = 0.7, show.legend = FALSE) +
+  geom_text(
+    aes(
+      label = round(correlacion, 2),
+      hjust = ifelse(correlacion >= 0, -0.2, 1.2)
+    ),
+    fontface = "bold",
+    size = 3.5
+  ) +
+  coord_flip() +
+  scale_y_continuous(limits = c(-1, 1), breaks = seq(-1, 1, 0.2)) +
+  scale_fill_gradient2(
+    low = "#2B4C7E", 
+    mid = "gray90", 
+    high = "#D9534F", 
+    midpoint = 0
+  ) +
+  labs(
+    title = "Correlación del Precio en Pesos contra distancias",
+    x = NULL,
+    y = "Correlación",
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    axis.title = element_text(face = "bold"),
+    axis.text.y = element_text(face = "bold"),
+    plot.caption = element_text(hjust = 0, face = "italic", size = 9),
+    plot.caption.position = "plot"
+  )
+
+
+```
+
+Al analizar las curvas de densidad de precio según la presencia o ausencia de atributos binarios, se observa un patrón generalizado: la tenencia de equipamiento básico no altera sustancialmente la forma de la distribución, generando únicamente un ligero desplazamiento marginal hacia la derecha; ergo precios levemente mayores.
+
+Sin embargo, la presencia de garage, amueblado y calefacción constituye la principal excepción a este comportamiento. Para estas tres características, las distribuciones exhiben una mayor dispersión y una marcada asimetría hacia la derecha. Esto pone en evidencia que se trata de atributos diferenciales, asociados a segmentos del mercado de mayor categoría donde el abanico de precios de alquiler es significativamente más elevado y heterogéneo.
+
+```{r Atributos}
+
+base_aux <- base |> 
+  select(
+    precio_pesos,
+    `Admite Mascotas` = admite_mascotas,
+    `Balcón` = balcon,
+    `Terraza` = terraza,
+    `Ascensor` = ascensor,
+    `Garage` = garage,
+    `Amueblado` = amueblado,
+    `Aire Acondicionado` = aire_acondicionado,
+    `Calefacción` = calefaccion
+  ) |> 
+  mutate(across(-precio_pesos, ~ ifelse(. %in% c(1, TRUE, "1", "TRUE", "Si", "Sí"), "Sí", "No"))) |> 
+  pivot_longer(
+    cols = -precio_pesos,
+    names_to = "atributo",
+    values_to = "presencia"
+  ) |> 
+  filter(!is.na(presencia), !is.na(precio_pesos))
+
+# 2. Densidades facetadas
+ggplot(base_aux, aes(x = precio_pesos, fill = presencia)) +
+  geom_density(alpha = 0.4, color = "white") +
+  facet_wrap(~ atributo, scales = "free_y", ncol = 3) +
+  scale_x_continuous(
+    labels = label_comma(big.mark = ".", decimal.mark = ","),
+    limits = c(0, 200000)
+  ) +
+  scale_fill_manual(values = c("Sí" = "#2B4C7E", "No" = "#7D8C99"), name = "Cuenta con atributo:") +
+  labs(
+    title = "Distribución del Precio ($) según Atributos Binarios",
+    subtitle = "Comparación de curvas de densidad para propiedades con y sin cada equipamiento",
+    x = "Precio ($)",
+    y = "Densidad",
+    caption = "Fuente: Dataset de propiedades."
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    axis.title = element_text(face = "bold"),
+    strip.background = element_rect(fill = "gray92"),
+    strip.text = element_text(face = "bold"),
+    legend.position = "bottom",
+    plot.caption = element_text(hjust = 0, face = "italic", size = 9),
+    plot.caption.position = "plot"
+  )
+
+```
+
+```{r Aux top 7}
+
+df_top_barrios <- base |> 
+  filter(!is.na(barrio), barrio != "") |> 
+  count(barrio, name = "cantidad") |> 
+  mutate(
+    pct = cantidad / sum(cantidad),
+    barrio = stringr::str_to_title(barrio)
+  ) |> 
+  arrange(desc(pct)) |> 
+  slice_head(n = 7)
+
+pct_acumulado_top7 <- sum(df_top_barrios$pct)
+
+```
+
+La siguiente visualización nos comunica la alta concentración de propiedades que hay en alquiler en la zona sureste y sur del departamento, enfocandosé en su mayoría en las áreas correspondientes a los municipios B y CH. y presente a un nivel menor en el E. El gráfico de barras a continuación respalda dschos resultados, con los 7 barrios que mpas propiedades tienen en alquiler pertenenciendo a dichos municiíos. Dichos barrios acumulan un total de `r percent(pct_acumulado_top7, accuracy = 0.1)` respecto del total de propiedades en alquiler.
+
+```{r Hex mapa}
+
+p_mapa_hex <- ggplot(base, aes(x = longitud_X, y = latitud_Y)) +
+  annotation_map_tile(type = "cartolight", zoom = 12, progress = "none") +
+  geom_hex(bins = 35, alpha = 0.75, color = "white", linewidth = 0.1) +
+  scale_fill_viridis_c(option = "magma", name = "Cantidad de\npropiedades", trans = "log10") +
+  coord_sf(crs = 4326, xlim = c(-56.26, -56.03), ylim = c(-34.94, -34.82), expand = FALSE) +
+  theme_bw(base_size = 11) +
+  labs(x = NULL, 
+       y = NULL)
+
+p_mapa_hex
+
+```
+
+```{r 7 barrios}
+
+p_barrios <- ggplot(df_top_barrios, aes(x = reorder(barrio, pct), y = pct)) +
+  geom_col(fill = "#2B4C7E", width = 0.65) +
+  geom_text(
+    aes(label = percent(pct, accuracy = 0.1)),
+    hjust = -0.15,
+    fontface = "bold",
+    size = 3.8
+  ) +
+  coord_flip() +
+  scale_y_continuous(labels = percent_format(), limits = c(0, max(df_top_barrios$pct) * 1.2)) +
+  labs(
+    title = "Top 7 Barrios con Mayor Concentración de Alquileres",
+    x = NULL,
+    y = "Porcentaje sobre el total de la base",
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.title = element_text(face = "bold"),
+    axis.text.y = element_text(face = "bold"),
+    plot.caption = element_text(hjust = 0, face = "italic", size = 9),
+    plot.caption.position = "plot"
+  )
+
+p_barrios
+
+```
+
+### Modelo predictivo
+
+Para la construcción del modelo de estimación del precio mensual de los alquileres se entrenó un modelo de random forest, dada la alta precisión que tiene como modelo, así como la robustez frente a datos atípicos que pudiesen alterar los resultados. Se seleccionaron variables físicas de los inmuebles (dormitorios, baños, balcón, garage, metros_totales y gastos_comunes) y un conjunto de variables geoespaciales relativas a la distancia hacia puntos de interés. Estas últimas se construyeron específicamente teniendo en cuenta la necesidad de entrenar un algoritmo que como resultado arroje una variable cuantitativa contínua, cuando sus insumos originales eran en un principio mayormente discretos (específicamente binarios). Ded igual manera, se utilizaron para sustituir la utilización de la variable barrio de manera directa. La necesidad de hacer esta sustitución nace de el hecho de que la variable barrio es una variable categórica de 61 niveles, y dado que contabamos con poco menos de 1500 variables, el uso de tanto niveles se entendió que iba a entorpecer el algoritmo, ya que poor barrio se poseen pocos datos (y en algunos ninguno). De esta manera, se calcularon los centroides de cada barrio, y desde dicho centroide se midieron las distancias correspondientes a las vías de referencia, lo que nos permitió tener una observación por barrio que a la hora de ingresarse en el predictor de la API un barrio en particular, se predice entre otras cosas utilizando las distancias de dicho centroide en cuestión.
+
+Los precios predichos se realizaron en la moneda local, esto es pesos uruguayos. Aquellos originalmente fijados en dólares estadounidenses se convirtieron utilizando un tipo de cambio de referencia de \$40. El conjunto de datos completo se dividió aleatoriamente en un 80% para la fase de entrenamiento y un 20% para la evaluación.
+
+Se ajustó un algoritmo configurado con 500 árboles, un mínimo de 20 observaciones por nodo hoja, la evaluación de 6 variables por división de bootstrap. Estos parámetros se fueron ajustando tras varias iteraciones del algoritmo.
+
+```{r Set Random Forest}
+
+# Conversión de los precios a pesos, seleccionamos las variables de entrenamiento  ----
+base_rf <- base |> 
+  mutate(
+    precio_pesos = as.numeric(if_else(moneda == "USD(US$)", precio * 40, precio)),
+    across(c(barrio, balcon, garage), ~as.factor(.x)),
+    across(c(dormitorios, baños, metros_totales, gastos_comunes, starts_with("dist_")), ~as.numeric(.x)),
+  ) |> 
+  select(precio_pesos, dormitorios, baños, balcon, garage, metros_totales, gastos_comunes, starts_with("dist_"))
+
+# Split de los datos ----
+set.seed(123) 
+split_rf <- initial_split(base_rf, prop = 0.80)
+train_rf <- training(split_rf)
+test_rf  <- testing(split_rf)
+
+# Modelo ----
+rf <- rand_forest(
+  trees = 500,    # Cantidad de árboles
+  min_n = 20,      # Mínimo de nodos por cada hoja
+  mtry = 6         # Cantidad de variables evaluadas en cada bootstrap
+) |> 
+  set_engine("ranger", importance = "impurity", num.threads = 4) |> 
+  set_mode("regression")
+
+# Receta ----
+receta_rf <- recipe(precio_pesos ~ ., data = train_rf) |> 
+  step_zv(all_predictors()) 
+
+# Workflow ----
+workflow_rf <- workflow() |> 
+  add_recipe(receta_rf) |> 
+  add_model(rf)
+
+```
+
+En la etapa de entrenamiento, el modelo demostró una alta capacidad para capturar los patrones del mercado inmobiliario local. Al evaluar las predicciones sobre este conjunto de datos, se obtuvo un coeficiente de determinación ($R^2$) de 0.916, lo que indica que el algoritmo logró explicar el 91.6% de la variabilidad total de los precios de alquiler. En cuanto a las métricas de error, el Error Absoluto Medio (MAE) fue de \$3.364 UYU, representando el desvío promedio en valor absoluto entre el precio real y el predicho para las propiedades de entrenamiento. Por su parte, el Error Cuadrático Medio (RMSE) alcanzó los \$7.950 UYU; indicando la presencia de algunas propiedades con precios atípicamente alejados de la media en la muestra de entrenamiento.
+
+```{r Train Resultados}
+
+modelo_rf <- fit(workflow_rf, data = train_rf)
+
+# Predecimos y evaluamos las metricas para los datos de train ----
+
+predicciones_train <- predict(modelo_rf, new_data = train_rf) |> 
+  bind_cols(train_rf |> select(precio_pesos)) 
+
+metricas_train <- metrics(predicciones_train, truth = precio_pesos, estimate = .pred)
+
+metricas_train |> 
+  mutate(
+    .metric = case_when(
+      .metric == "rmse" ~ "RMSE (Error Cuadrático Medio)",
+      .metric == "rsq"  ~ "R² (Coeficiente de Determinación)",
+      .metric == "mae"  ~ "MAE (Error Absoluto Medio)",
+      TRUE ~ .metric
+    )
+  ) |> 
+  select(
+    Métrica = .metric, 
+    Valor = .estimate
+  ) |> 
+  kbl(
+    caption = "<b>Tabla 1:</b> Métricas de Entrenamiento",
+    digits = 2,
+    format.args = list(big.mark = ".", decimal.mark = ",")
+  ) |> 
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+    full_width = FALSE,
+    position = "center"
+  ) |> 
+  column_spec(1, bold = TRUE) |> 
+  column_spec(2, bold = TRUE, color = "#2c3e50")
+
+```
+
+Al contrastar con los valores observados en la muestra de prueba, no vistos durante el ajuste, el modelo mantuvo un desempeño altamente satisfactorio. Se alcanzó un $R^2$ de 0.833, confirmando que la estructura aprendida explica el 83.3% de la varianza en propiedades independientes. En esta fase, el MAE se situó en \$4.914 UYU, lo que significa que en el escenario real las predicciones del modelo se equivocan, en promedio, por aproximadamente \$4.914 pesos uruguayos por alquiler. Asimismo, el RMSE en prueba fue de \$7.773 UYU, un nivel controlado y muy alineado con el de entrenamiento que confirma que la magnitud de los errores grandes no se dispara al predecir datos nuevos. La moderada brecha entre ambos conjuntos descarta la presencia de un sobreajuste severo y valida la robustez del algoritmo seleccionado.
+
+```{r Test Resultados}
+
+# Predecimos y evaluamos las metricas para los datos de train ----
+predicciones_test <- predict(modelo_rf, new_data = test_rf) |> 
+  bind_cols(test_rf |> select(precio_pesos))
+
+metricas_test <- metrics(predicciones_test, truth = precio_pesos, estimate = .pred)
+
+metricas_test|> 
+  mutate(
+    .metric = case_when(
+      .metric == "rmse" ~ "RMSE (Error Cuadrático Medio)",
+      .metric == "rsq"  ~ "R² (Coeficiente de Determinación)",
+      .metric == "mae"  ~ "MAE (Error Absoluto Medio)",
+      TRUE ~ .metric
+    )
+  ) |> 
+  select(
+    Métrica = .metric, 
+    Valor = .estimate
+  ) |> 
+  kbl(
+    caption = "<b>Tabla 1:</b> Métricas de Test",
+    digits = 2,
+    format.args = list(big.mark = ".", decimal.mark = ",")
+  ) |> 
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+    full_width = FALSE,
+    position = "center"
+  ) |> 
+  column_spec(1, bold = TRUE) |> 
+  column_spec(2, bold = TRUE, color = "#2c3e50")
+
+```
+
+El análisis de la importancia de las variables utilizadas por el Random Forest para predecir los valores observados, desvela como responsables absolutos de los resultados a la superficie cubierta total del apartamento y los gastos_comunes. Detrás de ambos protagonistas se ubica la cantidad de baños, desplazando a un segundo plano, por ejemplo, a la cantidad de dormitorios. El resto de las variables utilizadas realizan aportes al modelo predictivo empleado.
+
+```{r VIP RF}
+
+modelo_rf |> 
+  extract_fit_parsnip() |> 
+  vip(
+    num_features = 15,
+    geom = "col",
+    aesthetics = list(fill = "#2c3e50", alpha = 0.85)
+  ) +
+  labs(
+    title = "Importancia de las Variables en el Precio del Alquiler",
+    subtitle = "Basado en la reducción de impureza del modelo Random Forest",
+    x = "Variables Predictoras",
+    y = "Importancia (Impureza de Nodos)"
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.title = element_text(face = "bold"),
+    axis.text.y = element_text(face = "bold"),
+    plot.caption = element_text(hjust = 0, face = "italic", size = 9),
+    plot.caption.position = "plot"
+  )
+
+```
+
+### Conclusión
+
+El trabajo realizado permitió generar un análisis completo y complementario que combinó un análisis exploratorio profundo, con una plataforma interactiva de visualización espacial así como predicción.
+
+Dentro de los hallazgos más destacados, resalta la superior capacidad explicativa de la cantidad de baños por sobre el número de dormitorios al determinar el precio del alquiler desafiando la intuición natural sobre los determinantes del valor inmobiliario. Se teoriza que la raíz del fenómeno se explicaría por la presencia de un segmento de propiedades de alta gama dentro de la muestra, donde la cantidad de baños actúa como un claro elemento diferenciador frente a los apartamentos de segmento medio. De cara a futuras investigaciones, resulta de especial interés analizar si el impacto de la cantidad de dormitorios cobra mayor relevancia al evaluar subconjuntos de datos filtrados de valores atípicos.
+
+Por otro lado, la elevada importancia de la superficie total (metros_totales) y de los gastos_comunes concuerda con la dinámica esperada del mercado locativo. Finalmente, el abordaje metodológico implementado para capturar la dimensión espacial a través de distancias geográficas desde centroides representó un aporte clave, permitiendo enriquecer la complejidad del modelo más alla de las propias caracteristicas de los apartamentos.
