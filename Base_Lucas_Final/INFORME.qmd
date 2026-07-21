@@ -18,23 +18,28 @@ knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
 
 ```{r Librerías, include = FALSE}
 
-library(ggplot2)
-library(ggrepel)
-library(ggcorrplot)
-library(readxl)
-library(tidyverse)
-library(readr)
-library(readxl)
-library(tibble)
-library(knitr)
-library(kableExtra)
-library(corrplot)
-library(tidymodels)
-library(scales)
-library(patchwork)
-library(ggspatial)
-library(prettymapr)
-library(vip)
+if (!require("pacman")) install.packages("pacman")
+
+# Cargar e instalar si faltan todas las librerías necesarias
+pacman::p_load(
+  ggplot2,
+  ggrepel,
+  ggcorrplot,
+  readxl,
+  tidyverse,
+  readr,
+  tibble,
+  knitr,
+  kableExtra,
+  corrplot,
+  tidymodels,
+  scales,
+  patchwork,
+  ggspatial,
+  prettymapr,
+  vip,
+  hexbin
+)
 
 ```
 
