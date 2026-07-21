@@ -6,6 +6,7 @@ library(readr)
 library(tibble)
 library(workflows) 
 library(parsnip)
+library(ranger)
 
 # Cargamos los datos ----
 base <- read_delim("base.csv", delim = ";", escape_double = FALSE, trim_ws = TRUE)
